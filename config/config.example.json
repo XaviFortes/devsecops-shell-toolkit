@@ -1,0 +1,6 @@
+{
+  "JenkinsUrl": "https://jenkins.example.com",
+  "JenkinsCredentialPath": "C:\\Users\\<user>\\.jenkins_secret.xml",
+  "BmcRobotPath": "C:\\code\\pw-sp-request",
+  "BmcRobotCommand": "npx tsx .\\tests\\request-sp.ts"
+}
