@@ -38,7 +38,7 @@ This repository starts with PowerShell support and is already structured to add 
 
 After you publish the repo, people can install it with:
 
-`./install.ps1 -RepositoryUrl https://github.com/<your-user>/devsecops-shell-toolkit.git`
+`./install.ps1 -RepositoryUrl https://github.com/XaviFortes/devsecops-shell-toolkit.git`
 
 The installer will:
 
@@ -80,3 +80,5 @@ Add Bash commands under `shells/bash` and document usage in that folder. Placeho
 Review any company-specific URLs, IDs, paths, and credentials flow before pushing to GitHub.
 
 See `docs/publishing.md` for a simple publishing flow.
+
+Repository URL: `https://github.com/XaviFortes/devsecops-shell-toolkit`

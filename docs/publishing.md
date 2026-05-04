@@ -19,7 +19,7 @@
 git init -b main
 git add .
 git commit -m "Initial DevSecOps toolkit release"
-git remote add origin https://github.com/<your-user>/devsecops-shell-toolkit.git
+git remote add origin https://github.com/XaviFortes/devsecops-shell-toolkit.git
 git push -u origin main
 ```
 
