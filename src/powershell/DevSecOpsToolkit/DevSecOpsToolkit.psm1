@@ -246,6 +246,7 @@ function Get-DevSecOpsToolkitStatus {
 
 function Get-DevSecOpsToolkitCommandCatalog {
     @(
+        [PSCustomObject]@{ Name = 'Start-DevSecOpsToolkit'; Category = 'Setup'; Summary = 'Open the interactive main menu for the toolkit.'; Usage = 'Start-DevSecOpsToolkit'; Dependencies = @('fzf') }
         [PSCustomObject]@{ Name = 'Get-DevSecOpsToolkitHelp'; Category = 'Setup'; Summary = 'List toolkit commands and show usage details.'; Usage = 'Get-DevSecOpsToolkitHelp [-CommandName <name>] [-Interactive]'; Dependencies = @() }
         [PSCustomObject]@{ Name = 'Get-DevSecOpsToolkitStatus'; Category = 'Setup'; Summary = 'Show install metadata, current Azure subscription, current Kubernetes context, and dependency status.'; Usage = 'Get-DevSecOpsToolkitStatus'; Dependencies = @('az', 'kubectl') }
         [PSCustomObject]@{ Name = 'Test-DevSecOpsToolkitDependencies'; Category = 'Setup'; Summary = 'Check whether external tools required by the toolkit are installed.'; Usage = 'Test-DevSecOpsToolkitDependencies [-Commands az,kubectl,fzf]'; Dependencies = @() }
@@ -315,6 +316,189 @@ function Get-DevSecOpsToolkitHelp {
     }
 
     $catalog | Select-Object Category, Name, Summary, Usage | Format-Table -Wrap -AutoSize
+}
+
+function Read-DevSecOpsToolkitMenuSelection {
+    param(
+        [Parameter(Mandatory = $true)][string]$Title,
+        [Parameter(Mandatory = $true)][string[]]$Options
+    )
+
+    if (-not $Options -or $Options.Count -eq 0) {
+        return $null
+    }
+
+    if (Get-Command fzf -ErrorAction SilentlyContinue) {
+        return ($Options | fzf --prompt "$Title > " --height 60% --layout reverse --border)
+    }
+
+    Write-Host "`n$Title" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $Options.Count; $i++) {
+        Write-Host ('[{0}] {1}' -f ($i + 1), $Options[$i])
+    }
+
+    $choice = Read-Host 'Choose a number or press Enter to go back'
+    if ([string]::IsNullOrWhiteSpace($choice)) {
+        return $null
+    }
+
+    $index = 0
+    if ([int]::TryParse($choice, [ref]$index)) {
+        $resolvedIndex = $index - 1
+        if ($resolvedIndex -ge 0 -and $resolvedIndex -lt $Options.Count) {
+            return $Options[$resolvedIndex]
+        }
+    }
+
+    return $null
+}
+
+function Wait-DevSecOpsToolkitMenuReturn {
+    Read-Host 'Press Enter to return to the menu' | Out-Null
+}
+
+function Invoke-DevSecOpsToolkitMenuCommand {
+    param([Parameter(Mandatory = $true)][string]$CommandName)
+
+    switch ($CommandName) {
+        'Start-DevSecOpsToolkit' {
+            return
+        }
+        'Get-DevSecOpsToolkitHelp' {
+            Get-DevSecOpsToolkitHelp
+        }
+        'Get-DevSecOpsToolkitStatus' {
+            Get-DevSecOpsToolkitStatus | Format-List | Out-Host
+        }
+        'Test-DevSecOpsToolkitDependencies' {
+            Test-DevSecOpsToolkitDependencies | Out-Host
+        }
+        'Install-DevSecOpsToolkitDependencies' {
+            Install-DevSecOpsToolkitDependencies -Prompt
+        }
+        'Update-DevSecOpsToolkit' {
+            Update-DevSecOpsToolkit -Reimport
+        }
+        'Get-AzureSubscriptionSummary' {
+            Get-AzureSubscriptionSummary | Format-Table -AutoSize | Out-Host
+        }
+        'asx' {
+            asx
+        }
+        'get-sp-expiry' {
+            get-sp-expiry
+        }
+        'Get-AksSpExpiry' {
+            $allAnswer = Read-Host 'Scan all enabled subscriptions automatically? (Y/N)'
+            Get-AksSpExpiry -All:($allAnswer -match '^[yYsS]')
+        }
+        'aks-sync' {
+            aks-sync
+        }
+        'Find-KubeResource' {
+            $name = Read-Host 'Name contains (optional)'
+            $kind = Read-Host 'Kind [all,pods,services,deployments,statefulsets,ingresses,jobs,cronjobs] (default: all)'
+            if ([string]::IsNullOrWhiteSpace($kind)) {
+                $kind = 'all'
+            }
+            Find-KubeResource -Name $name -Kind $kind | Format-Table -AutoSize | Out-Host
+        }
+        'Get-KubePodRestartReport' {
+            $namespace = Read-Host 'Namespace filter (optional)'
+            $topValue = Read-Host 'How many pods to show? (default: 20)'
+            $includeZero = Read-Host 'Include zero-restart pods? (Y/N)'
+            $top = 20
+            if (-not [string]::IsNullOrWhiteSpace($topValue)) {
+                [void][int]::TryParse($topValue, [ref]$top)
+            }
+            Get-KubePodRestartReport -Namespace $namespace -Top $top -IncludeZeroRestarts:($includeZero -match '^[yYsS]') | Format-Table -AutoSize | Out-Host
+        }
+        'Get-KubeImageInventory' {
+            $namespace = Read-Host 'Namespace filter (optional)'
+            Get-KubeImageInventory -Namespace $namespace | Format-Table -Wrap -AutoSize | Out-Host
+        }
+        'k-clean' {
+            $answer = Read-Host 'Delete failed, evicted, or errored pods now? (Y/N)'
+            if ($answer -match '^[yYsS]') {
+                k-clean
+            }
+        }
+        'Test-TlsEndpoint' {
+            $urlValue = Read-Host 'Enter one or more URLs separated by commas'
+            $warningValue = Read-Host 'Warning threshold in days (default: 30)'
+            $warningDays = 30
+            if (-not [string]::IsNullOrWhiteSpace($warningValue)) {
+                [void][int]::TryParse($warningValue, [ref]$warningDays)
+            }
+            $urls = @($urlValue -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            Test-TlsEndpoint -Url $urls -WarningDays $warningDays | Format-Table -AutoSize | Out-Host
+        }
+        'Find-JenkinsUserUsage' {
+            Find-JenkinsUserUsage
+        }
+        'New-BmcAzureTicket' {
+            $appId = Read-Host 'App ID'
+            $appName = Read-Host 'App name'
+            $expiryDate = Read-Host 'Expiry date (yyyy-MM-dd)'
+            $entorno = Read-Host 'Entorno (optional)'
+            New-BmcAzureTicket -AppId $appId -AppName $appName -ExpiryDate $expiryDate -Entorno $entorno
+        }
+        default {
+            & $CommandName
+        }
+    }
+
+    Wait-DevSecOpsToolkitMenuReturn
+}
+
+function Show-DevSecOpsToolkitCommandMenu {
+    param([Parameter(Mandatory = $true)][string]$Category)
+
+    while ($true) {
+        $entries = Get-DevSecOpsToolkitCommandCatalog |
+            Where-Object { $_.Category -eq $Category } |
+            Sort-Object Name |
+            ForEach-Object { '{0} :: {1}' -f $_.Name, $_.Summary }
+
+        $selection = Read-DevSecOpsToolkitMenuSelection -Title "$Category commands" -Options (@($entries) + 'Back')
+        if (-not $selection -or $selection -eq 'Back') {
+            return
+        }
+
+        $commandName = ($selection -split ' :: ')[0]
+        Invoke-DevSecOpsToolkitMenuCommand -CommandName $commandName
+    }
+}
+
+function Start-DevSecOpsToolkit {
+    while ($true) {
+        $selection = Read-DevSecOpsToolkitMenuSelection -Title 'DevSecOps Toolkit' -Options @(
+            'Setup',
+            'Azure',
+            'Kubernetes',
+            'Security',
+            'Automation',
+            'Help for a command',
+            'Exit'
+        )
+
+        switch ($selection) {
+            'Setup' { Show-DevSecOpsToolkitCommandMenu -Category 'Setup' }
+            'Azure' { Show-DevSecOpsToolkitCommandMenu -Category 'Azure' }
+            'Kubernetes' { Show-DevSecOpsToolkitCommandMenu -Category 'Kubernetes' }
+            'Security' { Show-DevSecOpsToolkitCommandMenu -Category 'Security' }
+            'Automation' { Show-DevSecOpsToolkitCommandMenu -Category 'Automation' }
+            'Help for a command' {
+                $entries = Get-DevSecOpsToolkitCommandCatalog | Sort-Object Category, Name | ForEach-Object { '{0} :: {1}' -f $_.Name, $_.Summary }
+                $commandSelection = Read-DevSecOpsToolkitMenuSelection -Title 'Toolkit help' -Options (@($entries) + 'Back')
+                if ($commandSelection -and $commandSelection -ne 'Back') {
+                    Get-DevSecOpsToolkitHelp -CommandName (($commandSelection -split ' :: ')[0])
+                    Wait-DevSecOpsToolkitMenuReturn
+                }
+            }
+            default { return }
+        }
+    }
 }
 
 function Get-AzureSubscriptionSummary {
@@ -1085,4 +1269,6 @@ function New-BmcAzureTicket {
     }
 }
 
-Export-ModuleMember -Function Get-DevSecOpsToolkitHelp, aks-sync, asx, k-clean, Find-KubeResource, Get-AzureSubscriptionSummary, Get-KubePodRestartReport, Get-KubeImageInventory, Test-TlsEndpoint, get-sp-expiry, Get-AksSpExpiry, Find-JenkinsUserUsage, New-BmcAzureTicket, Get-DevSecOpsToolkitConfig, Get-DevSecOpsToolkitStatus, Test-DevSecOpsToolkitDependencies, Install-DevSecOpsToolkitDependencies, Update-DevSecOpsToolkit -Alias k, kx, kn
+Set-Alias -Name dso -Value Start-DevSecOpsToolkit
+
+Export-ModuleMember -Function Start-DevSecOpsToolkit, Get-DevSecOpsToolkitHelp, aks-sync, asx, k-clean, Find-KubeResource, Get-AzureSubscriptionSummary, Get-KubePodRestartReport, Get-KubeImageInventory, Test-TlsEndpoint, get-sp-expiry, Get-AksSpExpiry, Find-JenkinsUserUsage, New-BmcAzureTicket, Get-DevSecOpsToolkitConfig, Get-DevSecOpsToolkitStatus, Test-DevSecOpsToolkitDependencies, Install-DevSecOpsToolkitDependencies, Update-DevSecOpsToolkit -Alias dso, k, kx, kn

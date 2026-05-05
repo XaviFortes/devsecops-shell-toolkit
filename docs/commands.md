@@ -2,6 +2,8 @@
 
 ## Help and discovery
 
+- `Start-DevSecOpsToolkit`: opens the main interactive menu for the toolkit.
+- `dso`: shortcut alias for the main menu.
 - `Get-DevSecOpsToolkitHelp`: lists all toolkit commands with usage.
 - `Get-DevSecOpsToolkitHelp -CommandName Get-KubePodRestartReport`: shows detailed usage for one command.
 - `Get-DevSecOpsToolkitHelp -Interactive`: opens a simple numbered menu in the terminal.

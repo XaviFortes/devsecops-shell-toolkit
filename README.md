@@ -21,6 +21,7 @@ By default, the repo is set up for your public GitHub repository:
 
 ### PowerShell commands
 
+- `Start-DevSecOpsToolkit`
 - `Get-DevSecOpsToolkitHelp`
 - `Get-DevSecOpsToolkitStatus`
 - `Test-DevSecOpsToolkitDependencies`
@@ -38,7 +39,7 @@ By default, the repo is set up for your public GitHub repository:
 - `Find-JenkinsUserUsage`
 - `New-BmcAzureTicket`
 - `Update-DevSecOpsToolkit`
-- aliases: `k`, `kx`, `kn`
+- aliases: `dso`, `k`, `kx`, `kn`
 
 See [docs/commands.md](docs/commands.md) for the command guide.
 
@@ -49,6 +50,14 @@ For built-in discovery after install, run:
 Or open the menu with:
 
 `Get-DevSecOpsToolkitHelp -Interactive`
+
+For the full interactive main menu, run:
+
+`Start-DevSecOpsToolkit`
+
+Or simply:
+
+`dso`
 
 ## Quick start
 

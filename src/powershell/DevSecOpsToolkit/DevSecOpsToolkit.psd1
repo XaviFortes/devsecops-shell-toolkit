@@ -9,6 +9,7 @@
     PowerShellVersion = '5.1'
 
     FunctionsToExport = @(
+        'Start-DevSecOpsToolkit',
         'Get-DevSecOpsToolkitHelp',
         'aks-sync',
         'asx',
@@ -30,6 +31,7 @@
     )
 
     AliasesToExport = @(
+        'dso',
         'k',
         'kx',
         'kn'

@@ -106,4 +106,5 @@ else {
 Write-Host 'DevSecOpsToolkit installed successfully.' -ForegroundColor Green
 Write-Host "Config file: $configTarget" -ForegroundColor Cyan
 Write-Host "Profile import ensured in: $profilePath" -ForegroundColor Cyan
+Write-Host 'Launch the interactive menu with: Start-DevSecOpsToolkit (or alias: dso)' -ForegroundColor Cyan
 Write-Host 'Open a new PowerShell session or import the module again to start using the commands.' -ForegroundColor Yellow
