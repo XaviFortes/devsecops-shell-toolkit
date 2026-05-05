@@ -1,5 +1,11 @@
 # Commands guide
 
+## Help and discovery
+
+- `Get-DevSecOpsToolkitHelp`: lists all toolkit commands with usage.
+- `Get-DevSecOpsToolkitHelp -CommandName Get-KubePodRestartReport`: shows detailed usage for one command.
+- `Get-DevSecOpsToolkitHelp -Interactive`: opens a simple numbered menu in the terminal.
+
 ## Setup and health
 
 - `Get-DevSecOpsToolkitStatus`: shows install metadata, current Azure subscription, current Kubernetes context, and missing dependencies.
@@ -9,6 +15,7 @@
 
 ## Azure and AKS
 
+- `Get-AzureSubscriptionSummary`: lists Azure subscriptions and highlights the active one.
 - `asx`: fuzzy-pick the active Azure subscription.
 - `aks-sync`: fuzzy-pick AKS clusters and pull their kubeconfig credentials.
 - `Get-AksSpExpiry`: scan AKS service principal secret expiry across subscriptions.
@@ -18,7 +25,13 @@
 
 - `k-clean`: remove failed, evicted, or errored pods across namespaces.
 - `Find-KubeResource -Name api`: search Kubernetes resources across all namespaces.
+- `Get-KubePodRestartReport`: show pods with the highest restart counts.
+- `Get-KubeImageInventory`: inventory images currently running in the cluster.
 - aliases: `k`, `kx`, `kn`
+
+## Security
+
+- `Test-TlsEndpoint -Url https://example.com`: check TLS certificate issuer, expiry, and days remaining.
 
 ## Jenkins and automation
 

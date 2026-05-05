@@ -244,6 +244,218 @@ function Get-DevSecOpsToolkitStatus {
     }
 }
 
+function Get-DevSecOpsToolkitCommandCatalog {
+    @(
+        [PSCustomObject]@{ Name = 'Get-DevSecOpsToolkitHelp'; Category = 'Setup'; Summary = 'List toolkit commands and show usage details.'; Usage = 'Get-DevSecOpsToolkitHelp [-CommandName <name>] [-Interactive]'; Dependencies = @() }
+        [PSCustomObject]@{ Name = 'Get-DevSecOpsToolkitStatus'; Category = 'Setup'; Summary = 'Show install metadata, current Azure subscription, current Kubernetes context, and dependency status.'; Usage = 'Get-DevSecOpsToolkitStatus'; Dependencies = @('az', 'kubectl') }
+        [PSCustomObject]@{ Name = 'Test-DevSecOpsToolkitDependencies'; Category = 'Setup'; Summary = 'Check whether external tools required by the toolkit are installed.'; Usage = 'Test-DevSecOpsToolkitDependencies [-Commands az,kubectl,fzf]'; Dependencies = @() }
+        [PSCustomObject]@{ Name = 'Install-DevSecOpsToolkitDependencies'; Category = 'Setup'; Summary = 'Guide users through dependency installation with winget or manual links.'; Usage = 'Install-DevSecOpsToolkitDependencies [-Commands az,kubectl] [-Prompt]'; Dependencies = @('winget') }
+        [PSCustomObject]@{ Name = 'Update-DevSecOpsToolkit'; Category = 'Setup'; Summary = 'Pull the tracked repository and refresh the installed module.'; Usage = 'Update-DevSecOpsToolkit [-Reimport]'; Dependencies = @('git') }
+        [PSCustomObject]@{ Name = 'Get-AzureSubscriptionSummary'; Category = 'Azure'; Summary = 'List Azure subscriptions and highlight the current active one.'; Usage = 'Get-AzureSubscriptionSummary'; Dependencies = @('az') }
+        [PSCustomObject]@{ Name = 'asx'; Category = 'Azure'; Summary = 'Interactively switch the current Azure subscription.'; Usage = 'asx'; Dependencies = @('az', 'fzf') }
+        [PSCustomObject]@{ Name = 'get-sp-expiry'; Category = 'Azure'; Summary = 'Inspect secret expiry for a specific Azure application or service principal.'; Usage = 'get-sp-expiry'; Dependencies = @('az') }
+        [PSCustomObject]@{ Name = 'Get-AksSpExpiry'; Category = 'Azure'; Summary = 'Scan AKS clusters across subscriptions for service principal expiry risk.'; Usage = 'Get-AksSpExpiry [-All]'; Dependencies = @('az', 'fzf') }
+        [PSCustomObject]@{ Name = 'aks-sync'; Category = 'Kubernetes'; Summary = 'Pull kubeconfig credentials for selected AKS clusters.'; Usage = 'aks-sync'; Dependencies = @('az', 'fzf') }
+        [PSCustomObject]@{ Name = 'Find-KubeResource'; Category = 'Kubernetes'; Summary = 'Search Kubernetes resources across all namespaces.'; Usage = 'Find-KubeResource [-Name api] [-Kind pods]'; Dependencies = @('kubectl') }
+        [PSCustomObject]@{ Name = 'Get-KubePodRestartReport'; Category = 'Kubernetes'; Summary = 'Show pods with the highest restart counts across namespaces.'; Usage = 'Get-KubePodRestartReport [-Namespace default] [-Top 20] [-IncludeZeroRestarts]'; Dependencies = @('kubectl') }
+        [PSCustomObject]@{ Name = 'Get-KubeImageInventory'; Category = 'Kubernetes'; Summary = 'Inventory container images currently running in the cluster.'; Usage = 'Get-KubeImageInventory [-Namespace default]'; Dependencies = @('kubectl') }
+        [PSCustomObject]@{ Name = 'k-clean'; Category = 'Kubernetes'; Summary = 'Delete pods stuck in failed or evicted states.'; Usage = 'k-clean'; Dependencies = @('kubectl') }
+        [PSCustomObject]@{ Name = 'Test-TlsEndpoint'; Category = 'Security'; Summary = 'Check HTTPS certificates, expiry dates, and days remaining.'; Usage = 'Test-TlsEndpoint -Url https://example.com [-WarningDays 30]'; Dependencies = @() }
+        [PSCustomObject]@{ Name = 'Find-JenkinsUserUsage'; Category = 'Automation'; Summary = 'Search Jenkins credentials usage by user or service principal.'; Usage = 'Find-JenkinsUserUsage [-TargetUsers user1,user2]'; Dependencies = @() }
+        [PSCustomObject]@{ Name = 'New-BmcAzureTicket'; Category = 'Automation'; Summary = 'Launch the configured automation to request Azure secret renewal.'; Usage = 'New-BmcAzureTicket -AppId <id> -AppName <name> -ExpiryDate 2026-12-31'; Dependencies = @() }
+    )
+}
+
+function Get-DevSecOpsToolkitHelp {
+    param(
+        [string]$CommandName,
+        [string]$Category,
+        [switch]$Interactive
+    )
+
+    $catalog = Get-DevSecOpsToolkitCommandCatalog | Sort-Object Category, Name
+
+    if ($Interactive) {
+        Write-Host 'DevSecOps Toolkit command menu' -ForegroundColor Cyan
+        for ($i = 0; $i -lt $catalog.Count; $i++) {
+            Write-Host ('[{0}] {1} - {2}' -f ($i + 1), $catalog[$i].Name, $catalog[$i].Summary)
+        }
+
+        $choice = Read-Host 'Choose a command number for details, or press Enter to exit'
+        if ([string]::IsNullOrWhiteSpace($choice)) {
+            return
+        }
+
+        if ($choice -as [int]) {
+            $index = [int]$choice - 1
+            if ($index -ge 0 -and $index -lt $catalog.Count) {
+                $CommandName = $catalog[$index].Name
+            }
+        }
+    }
+
+    if ($Category) {
+        $catalog = $catalog | Where-Object { $_.Category -eq $Category }
+    }
+
+    if ($CommandName) {
+        $entry = $catalog | Where-Object { $_.Name -eq $CommandName } | Select-Object -First 1
+        if (-not $entry) {
+            throw "Command not found in toolkit help: $CommandName"
+        }
+
+        [PSCustomObject]@{
+            Name         = $entry.Name
+            Category     = $entry.Category
+            Summary      = $entry.Summary
+            Usage        = $entry.Usage
+            Dependencies = ($entry.Dependencies -join ', ')
+        } | Format-List | Out-Host
+        return
+    }
+
+    $catalog | Select-Object Category, Name, Summary, Usage | Format-Table -Wrap -AutoSize
+}
+
+function Get-AzureSubscriptionSummary {
+    Assert-DevSecOpsToolkitDependencies -Commands @('az') -FeatureName 'Get-AzureSubscriptionSummary'
+
+    $current = az account show --output json 2>$null | ConvertFrom-Json
+    $subscriptions = az account list --all --output json 2>$null | ConvertFrom-Json
+
+    $subscriptions | ForEach-Object {
+        [PSCustomObject]@{
+            Name      = $_.name
+            Id        = $_.id
+            TenantId  = $_.tenantId
+            State     = $_.state
+            IsCurrent = ($current.id -eq $_.id)
+        }
+    } | Sort-Object -Property @{ Expression = 'IsCurrent'; Descending = $true }, Name
+}
+
+function Get-KubePodRestartReport {
+    param(
+        [string]$Namespace,
+        [int]$Top = 20,
+        [switch]$IncludeZeroRestarts
+    )
+
+    Assert-DevSecOpsToolkitDependencies -Commands @('kubectl') -FeatureName 'Get-KubePodRestartReport'
+
+    $json = kubectl get pods --all-namespaces -o json 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) {
+        throw 'Unable to query pods from the current Kubernetes context.'
+    }
+
+    $pods = ($json | ConvertFrom-Json).items | ForEach-Object {
+        $restartCount = 0
+        foreach ($status in @($_.status.containerStatuses) + @($_.status.initContainerStatuses)) {
+            if ($status) {
+                $restartCount += [int]$status.restartCount
+            }
+        }
+
+        [PSCustomObject]@{
+            Namespace    = $_.metadata.namespace
+            Pod          = $_.metadata.name
+            Phase        = $_.status.phase
+            Restarts     = $restartCount
+            Node         = $_.spec.nodeName
+            CreatedAt    = $_.metadata.creationTimestamp
+        }
+    }
+
+    if ($Namespace) {
+        $pods = $pods | Where-Object { $_.Namespace -eq $Namespace }
+    }
+    if (-not $IncludeZeroRestarts) {
+        $pods = $pods | Where-Object { $_.Restarts -gt 0 }
+    }
+
+    $pods | Sort-Object -Property Restarts, Namespace, Pod -Descending | Select-Object -First $Top
+}
+
+function Get-KubeImageInventory {
+    param([string]$Namespace)
+
+    Assert-DevSecOpsToolkitDependencies -Commands @('kubectl') -FeatureName 'Get-KubeImageInventory'
+
+    $json = kubectl get pods --all-namespaces -o json 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) {
+        throw 'Unable to query pods from the current Kubernetes context.'
+    }
+
+    $inventory = foreach ($pod in ($json | ConvertFrom-Json).items) {
+        if ($Namespace -and $pod.metadata.namespace -ne $Namespace) {
+            continue
+        }
+
+        foreach ($container in @($pod.spec.initContainers) + @($pod.spec.containers)) {
+            if (-not $container) {
+                continue
+            }
+
+            [PSCustomObject]@{
+                Namespace = $pod.metadata.namespace
+                Workload  = $pod.metadata.name
+                Container = $container.name
+                Image     = $container.image
+            }
+        }
+    }
+
+    $inventory |
+        Group-Object Image |
+        ForEach-Object {
+            [PSCustomObject]@{
+                Image      = $_.Name
+                References = $_.Count
+                Namespaces = (($_.Group.Namespace | Sort-Object -Unique) -join ', ')
+            }
+        } |
+        Sort-Object -Property References, Image -Descending
+}
+
+function Test-TlsEndpoint {
+    param(
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)][string[]]$Url,
+        [int]$WarningDays = 30
+    )
+
+    process {
+        foreach ($entry in $Url) {
+            $uri = if ($entry -match '^https?://') { [Uri]$entry } else { [Uri]('https://' + $entry) }
+            $tcpClient = [System.Net.Sockets.TcpClient]::new()
+            try {
+                $tcpClient.Connect($uri.Host, $(if ($uri.Port -gt 0) { $uri.Port } else { 443 }))
+                $sslStream = [System.Net.Security.SslStream]::new($tcpClient.GetStream(), $false, { $true })
+                try {
+                    $sslStream.AuthenticateAsClient($uri.Host)
+                    $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($sslStream.RemoteCertificate)
+                    $expiryDate = $certificate.NotAfter
+                    $daysRemaining = [math]::Floor(($expiryDate - (Get-Date)).TotalDays)
+
+                    [PSCustomObject]@{
+                        Url           = $uri.AbsoluteUri
+                        Subject       = $certificate.Subject
+                        Issuer        = $certificate.Issuer
+                        ExpiresOn     = $expiryDate
+                        DaysRemaining = $daysRemaining
+                        Status        = if ($daysRemaining -lt 0) { 'Expired' } elseif ($daysRemaining -le $WarningDays) { 'Warning' } else { 'Healthy' }
+                    }
+                }
+                finally {
+                    $sslStream.Dispose()
+                }
+            }
+            finally {
+                $tcpClient.Dispose()
+            }
+        }
+    }
+}
+
 function Find-KubeResource {
     param(
         [string]$Name,
@@ -873,4 +1085,4 @@ function New-BmcAzureTicket {
     }
 }
 
-Export-ModuleMember -Function aks-sync, asx, k-clean, Find-KubeResource, get-sp-expiry, Get-AksSpExpiry, Find-JenkinsUserUsage, New-BmcAzureTicket, Get-DevSecOpsToolkitConfig, Get-DevSecOpsToolkitStatus, Test-DevSecOpsToolkitDependencies, Install-DevSecOpsToolkitDependencies, Update-DevSecOpsToolkit -Alias k, kx, kn
+Export-ModuleMember -Function Get-DevSecOpsToolkitHelp, aks-sync, asx, k-clean, Find-KubeResource, Get-AzureSubscriptionSummary, Get-KubePodRestartReport, Get-KubeImageInventory, Test-TlsEndpoint, get-sp-expiry, Get-AksSpExpiry, Find-JenkinsUserUsage, New-BmcAzureTicket, Get-DevSecOpsToolkitConfig, Get-DevSecOpsToolkitStatus, Test-DevSecOpsToolkitDependencies, Install-DevSecOpsToolkitDependencies, Update-DevSecOpsToolkit -Alias k, kx, kn

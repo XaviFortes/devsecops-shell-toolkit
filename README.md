@@ -21,13 +21,18 @@ By default, the repo is set up for your public GitHub repository:
 
 ### PowerShell commands
 
+- `Get-DevSecOpsToolkitHelp`
 - `Get-DevSecOpsToolkitStatus`
 - `Test-DevSecOpsToolkitDependencies`
 - `Install-DevSecOpsToolkitDependencies`
+- `Get-AzureSubscriptionSummary`
 - `aks-sync`
 - `asx`
 - `Find-KubeResource`
+- `Get-KubePodRestartReport`
+- `Get-KubeImageInventory`
 - `k-clean`
+- `Test-TlsEndpoint`
 - `get-sp-expiry`
 - `Get-AksSpExpiry`
 - `Find-JenkinsUserUsage`
@@ -36,6 +41,14 @@ By default, the repo is set up for your public GitHub repository:
 - aliases: `k`, `kx`, `kn`
 
 See [docs/commands.md](docs/commands.md) for the command guide.
+
+For built-in discovery after install, run:
+
+`Get-DevSecOpsToolkitHelp`
+
+Or open the menu with:
+
+`Get-DevSecOpsToolkitHelp -Interactive`
 
 ## Quick start
 

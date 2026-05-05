@@ -9,10 +9,15 @@
     PowerShellVersion = '5.1'
 
     FunctionsToExport = @(
+        'Get-DevSecOpsToolkitHelp',
         'aks-sync',
         'asx',
         'k-clean',
         'Find-KubeResource',
+        'Get-AzureSubscriptionSummary',
+        'Get-KubePodRestartReport',
+        'Get-KubeImageInventory',
+        'Test-TlsEndpoint',
         'get-sp-expiry',
         'Get-AksSpExpiry',
         'Find-JenkinsUserUsage',
