@@ -692,6 +692,8 @@ function Update-DevSecOpsToolkit {
     }
 
     $repoRoot = $metadata.RepositoryRoot
+    $repoUrl = $metadata.RepositoryUrl
+
     if (-not $repoRoot -or -not (Test-Path -LiteralPath $repoRoot)) {
         throw 'Repository root from install metadata is missing. Reinstall the toolkit.'
     }
@@ -701,7 +703,21 @@ function Update-DevSecOpsToolkit {
         Assert-DevSecOpsToolkitDependencies -Commands @('git') -FeatureName 'Update-DevSecOpsToolkit'
 
         Write-Host "Refreshing repository in $repoRoot ..." -ForegroundColor Cyan
-        git -C $repoRoot pull --ff-only
+
+        # If we have a remote URL (GitHub install), always pull from origin
+        # Otherwise pull locally (local dev install)
+        if ($repoUrl) {
+            git -C $repoRoot fetch origin 2>$null
+            git -C $repoRoot pull origin main --ff-only 2>$null
+            # Fallback to master if main doesn't exist
+            if ($LASTEXITCODE -ne 0) {
+                git -C $repoRoot pull origin master --ff-only
+            }
+        }
+        else {
+            git -C $repoRoot pull --ff-only
+        }
+
         if ($LASTEXITCODE -ne 0) {
             throw 'git pull failed. Resolve the repository state and try again.'
         }
