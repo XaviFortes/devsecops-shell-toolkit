@@ -29,6 +29,9 @@
 - `Find-KubeResource -Name api`: search Kubernetes resources across all namespaces.
 - `Get-KubePodRestartReport`: show pods with the highest restart counts.
 - `Get-KubeImageInventory`: inventory images currently running in the cluster.
+- `Get-VeleroBackup`: list Velero backups with phase, counts, and expiration.
+- `Get-VeleroBackupDetails -Name backup-daily-20260504070013`: return parsed backup details.
+- `Get-VeleroBackupDetails -Name backup-daily-20260504070013 -Namespace devicemonitorind -Kind ServiceAccount,Pod -AsText`: keep the backup summary and show only matching detailed resource sections/items.
 - aliases: `k`, `kx`, `kn`
 
 ## Security

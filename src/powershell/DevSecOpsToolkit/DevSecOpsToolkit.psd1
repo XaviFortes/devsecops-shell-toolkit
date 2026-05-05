@@ -18,6 +18,8 @@
         'Get-AzureSubscriptionSummary',
         'Get-KubePodRestartReport',
         'Get-KubeImageInventory',
+        'Get-VeleroBackup',
+        'Get-VeleroBackupDetails',
         'Test-TlsEndpoint',
         'get-sp-expiry',
         'Get-AksSpExpiry',

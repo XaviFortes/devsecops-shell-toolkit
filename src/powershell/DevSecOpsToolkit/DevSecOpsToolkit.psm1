@@ -95,6 +95,13 @@ function Get-DevSecOpsToolkitDependencyCatalog {
             WingetId    = $null
             ManualUrl   = 'https://github.com/ahmetb/kubectx'
         }
+        [PSCustomObject]@{
+            Name        = 'velero'
+            Commands    = @('velero')
+            Description = 'Required for Velero backup listing and backup detail inspection commands.'
+            WingetId    = $null
+            ManualUrl   = 'https://velero.io/docs/'
+        }
     )
 }
 
@@ -260,6 +267,8 @@ function Get-DevSecOpsToolkitCommandCatalog {
         [PSCustomObject]@{ Name = 'Find-KubeResource'; Category = 'Kubernetes'; Summary = 'Search Kubernetes resources across all namespaces.'; Usage = 'Find-KubeResource [-Name api] [-Kind pods]'; Dependencies = @('kubectl') }
         [PSCustomObject]@{ Name = 'Get-KubePodRestartReport'; Category = 'Kubernetes'; Summary = 'Show pods with the highest restart counts across namespaces.'; Usage = 'Get-KubePodRestartReport [-Namespace default] [-Top 20] [-IncludeZeroRestarts]'; Dependencies = @('kubectl') }
         [PSCustomObject]@{ Name = 'Get-KubeImageInventory'; Category = 'Kubernetes'; Summary = 'Inventory container images currently running in the cluster.'; Usage = 'Get-KubeImageInventory [-Namespace default]'; Dependencies = @('kubectl') }
+        [PSCustomObject]@{ Name = 'Get-VeleroBackup'; Category = 'Kubernetes'; Summary = 'List Velero backups with phase, item counts, and expiration.'; Usage = 'Get-VeleroBackup [-Name backup-daily] [-Namespace velero]'; Dependencies = @('velero') }
+        [PSCustomObject]@{ Name = 'Get-VeleroBackupDetails'; Category = 'Kubernetes'; Summary = 'Describe a Velero backup and optionally filter detailed resources by namespace or kind.'; Usage = 'Get-VeleroBackupDetails -Name <backup> [-Namespace devicemonitorind] [-Kind ServiceAccount,Pod] [-AsText]'; Dependencies = @('velero') }
         [PSCustomObject]@{ Name = 'k-clean'; Category = 'Kubernetes'; Summary = 'Delete pods stuck in failed or evicted states.'; Usage = 'k-clean'; Dependencies = @('kubectl') }
         [PSCustomObject]@{ Name = 'Test-TlsEndpoint'; Category = 'Security'; Summary = 'Check HTTPS certificates, expiry dates, and days remaining.'; Usage = 'Test-TlsEndpoint -Url https://example.com [-WarningDays 30]'; Dependencies = @() }
         [PSCustomObject]@{ Name = 'Find-JenkinsUserUsage'; Category = 'Automation'; Summary = 'Search Jenkins credentials usage by user or service principal.'; Usage = 'Find-JenkinsUserUsage [-TargetUsers user1,user2]'; Dependencies = @() }
@@ -416,6 +425,37 @@ function Invoke-DevSecOpsToolkitMenuCommand {
         'Get-KubeImageInventory' {
             $namespace = Read-Host 'Namespace filter (optional)'
             Get-KubeImageInventory -Namespace $namespace | Format-Table -Wrap -AutoSize | Out-Host
+        }
+        'Get-VeleroBackup' {
+            $name = Read-Host 'Backup name contains (optional)'
+            $namespace = Read-Host 'Velero namespace (default: velero)'
+            if ([string]::IsNullOrWhiteSpace($namespace)) {
+                $namespace = 'velero'
+            }
+            Get-VeleroBackup -Name $name -Namespace $namespace | Format-Table -AutoSize | Out-Host
+        }
+        'Get-VeleroBackupDetails' {
+            $name = Read-Host 'Backup name'
+            if ([string]::IsNullOrWhiteSpace($name)) {
+                Write-Host 'Backup name is required.' -ForegroundColor Yellow
+                break
+            }
+
+            $namespace = Read-Host 'Filter resource namespace (optional)'
+            $kindValue = Read-Host 'Filter kinds, comma separated (optional, e.g. ServiceAccount,Pod,Deployment)'
+            $clusterScoped = Read-Host 'Keep cluster-scoped resources when namespace filter is used? (Y/N)'
+            $asText = Read-Host 'Render as filtered text view? (Y/N, default: Y)'
+
+            $kinds = @($kindValue -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            $useText = -not ($asText -match '^[nN]')
+
+            if ($useText) {
+                Get-VeleroBackupDetails -Name $name -Namespace $namespace -Kind $kinds -IncludeClusterScoped:($clusterScoped -match '^[yYsS]') -AsText | Out-Host
+            }
+            else {
+                $details = Get-VeleroBackupDetails -Name $name -Namespace $namespace -Kind $kinds -IncludeClusterScoped:($clusterScoped -match '^[yYsS]')
+                $details.Resources | Format-Table Section, Namespace, Name -Wrap -AutoSize | Out-Host
+            }
         }
         'k-clean' {
             $answer = Read-Host 'Delete failed, evicted, or errored pods now? (Y/N)'
@@ -599,6 +639,254 @@ function Get-KubeImageInventory {
             }
         } |
         Sort-Object -Property References, Image -Descending
+}
+
+function Get-VeleroBackup {
+    param(
+        [string]$Name,
+        [string]$Namespace = 'velero'
+    )
+
+    Assert-DevSecOpsToolkitDependencies -Commands @('velero') -FeatureName 'Get-VeleroBackup'
+
+    $json = velero backup get -o json 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) {
+        throw 'Unable to query Velero backups from the current context.'
+    }
+
+    $items = ($json | ConvertFrom-Json).items | ForEach-Object {
+        [PSCustomObject]@{
+            Name            = $_.metadata.name
+            Namespace       = $_.metadata.namespace
+            Phase           = $_.status.phase
+            Schedule        = $_.metadata.labels.'velero.io/schedule-name'
+            StorageLocation = $_.spec.storageLocation
+            Started         = $_.status.startTimestamp
+            Completed       = $_.status.completionTimestamp
+            ExpiresOn       = $_.status.expiration
+            TotalItems      = $_.status.progress.totalItems
+            ItemsBackedUp   = $_.status.progress.itemsBackedUp
+        }
+    }
+
+    if ($Namespace) {
+        $items = $items | Where-Object { $_.Namespace -eq $Namespace }
+    }
+    if ($Name) {
+        $items = $items | Where-Object { $_.Name -like "*$Name*" }
+    }
+
+    $items | Sort-Object Started -Descending
+}
+
+function Get-VeleroBackupDescribeValue {
+    param(
+        [AllowEmptyString()][string[]]$Lines,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    $escapedLabel = [regex]::Escape($Label)
+    foreach ($line in $Lines) {
+        if ($line -match ('^' + $escapedLabel + ':\s*(.*)$')) {
+            return $matches[1].Trim()
+        }
+    }
+
+    return $null
+}
+
+function Remove-DevSecOpsAnsiText {
+    param([Parameter(Mandatory = $true)][string]$Text)
+
+    return ([regex]::Replace($Text, "`e\[[0-9;]*[A-Za-z]", '')).Trim()
+}
+
+function ConvertFrom-VeleroBackupDescribeText {
+    param([Parameter(Mandatory = $true)][string]$Text)
+
+    $lines = @($Text -split "`r?`n")
+    $summaryLines = New-Object System.Collections.Generic.List[string]
+    $items = New-Object System.Collections.Generic.List[object]
+    $sectionOrder = 0
+    $itemOrder = 0
+    $inResourceList = $false
+    $currentSection = $null
+
+    foreach ($line in $lines) {
+        if (-not $inResourceList) {
+            $summaryLines.Add($line)
+            if ($line -eq 'Resource List:') {
+                $inResourceList = $true
+            }
+            continue
+        }
+
+        if ($line -match '^  (.+?):\s*$') {
+            $sectionOrder++
+            $sectionLabel = $matches[1].Trim()
+            $sectionParts = @($sectionLabel -split '/')
+            $kind = if ($sectionParts.Count -gt 1) { $sectionParts[-1] } else { $sectionLabel }
+            $apiVersion = if ($sectionParts.Count -gt 1) { ($sectionParts[0..($sectionParts.Count - 2)] -join '/') } else { $null }
+
+            $currentSection = [PSCustomObject]@{
+                Section      = $sectionLabel
+                ApiVersion   = $apiVersion
+                Kind         = $kind
+                SectionOrder = $sectionOrder
+            }
+            continue
+        }
+
+        if ($line -match '^    -\s+(.+?)\s*$' -and $currentSection) {
+            $itemOrder++
+            $rawName = $matches[1].Trim()
+            $namespace = $null
+            $name = $rawName
+            $isNamespaced = $false
+            $parts = @($rawName -split '/', 2)
+            if ($parts.Count -eq 2 -and -not [string]::IsNullOrWhiteSpace($parts[0]) -and -not [string]::IsNullOrWhiteSpace($parts[1])) {
+                $namespace = $parts[0]
+                $name = $parts[1]
+                $isNamespaced = $true
+            }
+
+            $items.Add([PSCustomObject]@{
+                Section      = $currentSection.Section
+                ApiVersion   = $currentSection.ApiVersion
+                Kind         = $currentSection.Kind
+                Namespace    = $namespace
+                Name         = $name
+                IsNamespaced = $isNamespaced
+                RawName      = $rawName
+                SectionOrder = $currentSection.SectionOrder
+                ItemOrder    = $itemOrder
+            })
+        }
+    }
+
+    $summary = [PSCustomObject]@{
+        Name          = (Get-VeleroBackupDescribeValue -Lines $lines -Label 'Name')
+        Namespace     = (Get-VeleroBackupDescribeValue -Lines $lines -Label 'Namespace')
+        Phase         = (Get-VeleroBackupDescribeValue -Lines $lines -Label 'Phase')
+        Started       = (Get-VeleroBackupDescribeValue -Lines $lines -Label 'Started')
+        Completed     = (Get-VeleroBackupDescribeValue -Lines $lines -Label 'Completed')
+        Expiration    = (Get-VeleroBackupDescribeValue -Lines $lines -Label 'Expiration')
+        TotalItems    = (Get-VeleroBackupDescribeValue -Lines $lines -Label 'Total items to be backed up')
+        ItemsBackedUp = (Get-VeleroBackupDescribeValue -Lines $lines -Label 'Items backed up')
+    }
+    $summaryArray = $summaryLines.ToArray()
+    $resourceArray = $items.ToArray()
+
+    [PSCustomObject]@{
+        Summary = $summary
+        SummaryLines = $summaryArray
+        Resources    = $resourceArray
+        RawText      = $Text.TrimEnd()
+    }
+}
+
+function Format-VeleroBackupDescribeText {
+    param(
+        [object[]]$SummaryLines,
+        [Parameter(Mandatory = $true)][object[]]$Resources
+    )
+
+    $output = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $SummaryLines) {
+        if ($line -eq 'Resource List:') {
+            break
+        }
+        $output.Add($line)
+    }
+
+    $output.Add('')
+    $output.Add('Resource List:')
+
+    if (-not $Resources -or $Resources.Count -eq 0) {
+        $output.Add('  <no matching resources>')
+        return ($output -join [Environment]::NewLine)
+    }
+
+    $groups = $Resources |
+        Group-Object Section |
+        Sort-Object { ($_.Group | Select-Object -First 1).SectionOrder }
+
+    foreach ($group in $groups) {
+        $output.Add('  {0}:' -f $group.Name)
+        foreach ($item in ($group.Group | Sort-Object ItemOrder)) {
+            $displayName = if ($item.IsNamespaced) { '{0}/{1}' -f $item.Namespace, $item.Name } else { $item.Name }
+            $output.Add('    - {0}' -f $displayName)
+        }
+    }
+
+    return ($output -join [Environment]::NewLine)
+}
+
+function Get-VeleroBackupDetails {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$Namespace,
+        [string[]]$Kind,
+        [switch]$IncludeClusterScoped,
+        [switch]$AsText,
+        [switch]$Raw
+    )
+
+    Assert-DevSecOpsToolkitDependencies -Commands @('velero') -FeatureName 'Get-VeleroBackupDetails'
+
+    $rawText = Remove-DevSecOpsAnsiText -Text (& velero backup describe $Name --details 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($rawText)) {
+        throw "Unable to describe Velero backup '$Name'."
+    }
+
+    if ($Raw) {
+        return $rawText
+    }
+
+    $parsed = ConvertFrom-VeleroBackupDescribeText -Text $rawText
+    $resources = @($parsed.Resources)
+
+    if ($Namespace) {
+        $resources = @($resources | Where-Object {
+            if ($_.IsNamespaced) {
+                $_.Namespace -eq $Namespace
+            }
+            else {
+                $IncludeClusterScoped
+            }
+        })
+    }
+
+    if ($Kind -and $Kind.Count -gt 0) {
+        $requestedKinds = @($Kind | Where-Object { $_ } | ForEach-Object { $_.ToLowerInvariant() })
+        $resources = @($resources | Where-Object {
+            $candidates = @(
+                $_.Kind,
+                $_.Section,
+                ($_.Kind + 's'),
+                ($_.Kind -replace 'ies$', 'y'),
+                ($_.Kind -replace 's$', '')
+            ) | Where-Object { $_ } | ForEach-Object { $_.ToLowerInvariant() } | Select-Object -Unique
+
+            @($requestedKinds | Where-Object { $_ -in $candidates }).Count -gt 0
+        })
+    }
+
+    if ($AsText) {
+        if (-not $Namespace -and (-not $Kind -or $Kind.Count -eq 0)) {
+            return $parsed.RawText
+        }
+
+        return (Format-VeleroBackupDescribeText -SummaryLines $parsed.SummaryLines -Resources $resources)
+    }
+
+    [PSCustomObject]@{
+        Summary      = $parsed.Summary
+        SummaryText  = (($parsed.SummaryLines | Where-Object { $_ -ne 'Resource List:' }) -join [Environment]::NewLine).TrimEnd()
+        Resources    = $resources
+        ResourceText = Format-VeleroBackupDescribeText -SummaryLines $parsed.SummaryLines -Resources $resources
+        RawText      = $parsed.RawText
+    }
 }
 
 function Test-TlsEndpoint {
@@ -1287,4 +1575,4 @@ function New-BmcAzureTicket {
 
 Set-Alias -Name dso -Value Start-DevSecOpsToolkit
 
-Export-ModuleMember -Function Start-DevSecOpsToolkit, Get-DevSecOpsToolkitHelp, aks-sync, asx, k-clean, Find-KubeResource, Get-AzureSubscriptionSummary, Get-KubePodRestartReport, Get-KubeImageInventory, Test-TlsEndpoint, get-sp-expiry, Get-AksSpExpiry, Find-JenkinsUserUsage, New-BmcAzureTicket, Get-DevSecOpsToolkitConfig, Get-DevSecOpsToolkitStatus, Test-DevSecOpsToolkitDependencies, Install-DevSecOpsToolkitDependencies, Update-DevSecOpsToolkit -Alias dso, k, kx, kn
+Export-ModuleMember -Function Start-DevSecOpsToolkit, Get-DevSecOpsToolkitHelp, aks-sync, asx, k-clean, Find-KubeResource, Get-AzureSubscriptionSummary, Get-KubePodRestartReport, Get-KubeImageInventory, Get-VeleroBackup, Get-VeleroBackupDetails, Test-TlsEndpoint, get-sp-expiry, Get-AksSpExpiry, Find-JenkinsUserUsage, New-BmcAzureTicket, Get-DevSecOpsToolkitConfig, Get-DevSecOpsToolkitStatus, Test-DevSecOpsToolkitDependencies, Install-DevSecOpsToolkitDependencies, Update-DevSecOpsToolkit -Alias dso, k, kx, kn
