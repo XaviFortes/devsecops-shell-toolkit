@@ -1,7 +1,8 @@
 param(
     [string]$RepositoryUrl,
     [string]$InstallRoot = (Join-Path $HOME '.devsecops-shell-toolkit'),
-    [switch]$Force
+    [switch]$Force,
+    [switch]$ConfigureDependencies
 )
 
 $ErrorActionPreference = 'Stop'
@@ -90,6 +91,18 @@ if ($profileContent -notmatch [regex]::Escape($importLine)) {
 }
 
 Import-Module (Join-Path $moduleTarget 'DevSecOpsToolkit.psd1') -Force
+
+if ($ConfigureDependencies) {
+    Install-DevSecOpsToolkitDependencies -Prompt
+}
+else {
+    $missingDependencies = Test-DevSecOpsToolkitDependencies -PassThru | Where-Object { -not $_.Installed }
+    if ($missingDependencies) {
+        Write-Host 'Some optional dependencies are missing.' -ForegroundColor Yellow
+        Write-Host 'Run Install-DevSecOpsToolkitDependencies for a guided setup.' -ForegroundColor Yellow
+    }
+}
+
 Write-Host 'DevSecOpsToolkit installed successfully.' -ForegroundColor Green
 Write-Host "Config file: $configTarget" -ForegroundColor Cyan
 Write-Host "Profile import ensured in: $profilePath" -ForegroundColor Cyan

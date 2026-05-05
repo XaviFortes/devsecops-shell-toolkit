@@ -58,6 +58,231 @@ function Get-DevSecOpsToolkitConfig {
     return $savedConfig
 }
 
+function Get-DevSecOpsToolkitDependencyCatalog {
+    @(
+        [PSCustomObject]@{
+            Name        = 'git'
+            Commands    = @('git')
+            Description = 'Required to clone and update the toolkit from GitHub.'
+            WingetId    = 'Git.Git'
+            ManualUrl   = 'https://git-scm.com/download/win'
+        }
+        [PSCustomObject]@{
+            Name        = 'azure-cli'
+            Commands    = @('az')
+            Description = 'Required for Azure subscription, AKS and service principal commands.'
+            WingetId    = 'Microsoft.AzureCLI'
+            ManualUrl   = 'https://learn.microsoft.com/cli/azure/install-azure-cli'
+        }
+        [PSCustomObject]@{
+            Name        = 'kubectl'
+            Commands    = @('kubectl')
+            Description = 'Required for Kubernetes commands.'
+            WingetId    = 'Kubernetes.kubectl'
+            ManualUrl   = 'https://kubernetes.io/docs/tasks/tools/'
+        }
+        [PSCustomObject]@{
+            Name        = 'fzf'
+            Commands    = @('fzf')
+            Description = 'Enables interactive fuzzy selection in commands like aks-sync and asx.'
+            WingetId    = 'junegunn.fzf'
+            ManualUrl   = 'https://github.com/junegunn/fzf'
+        }
+        [PSCustomObject]@{
+            Name        = 'kubectx-kubens'
+            Commands    = @('kubectx', 'kubens')
+            Description = 'Optional helpers for context and namespace switching.'
+            WingetId    = $null
+            ManualUrl   = 'https://github.com/ahmetb/kubectx'
+        }
+    )
+}
+
+function Resolve-DevSecOpsToolkitDependencies {
+    param([string[]]$Commands)
+
+    $catalog = Get-DevSecOpsToolkitDependencyCatalog
+    if (-not $Commands -or $Commands.Count -eq 0) {
+        return $catalog
+    }
+
+    $normalized = $Commands | ForEach-Object { $_.ToLowerInvariant() }
+    return $catalog | Where-Object {
+        $_.Name -in $normalized -or @($_.Commands | Where-Object { $_.ToLowerInvariant() -in $normalized }).Count -gt 0
+    }
+}
+
+function Test-DevSecOpsToolkitDependencies {
+    param(
+        [string[]]$Commands,
+        [switch]$PassThru
+    )
+
+    $items = foreach ($dependency in (Resolve-DevSecOpsToolkitDependencies -Commands $Commands)) {
+        $missingCommands = @($dependency.Commands | Where-Object { -not (Get-Command $_ -ErrorAction SilentlyContinue) })
+
+        [PSCustomObject]@{
+            Name            = $dependency.Name
+            Installed       = ($missingCommands.Count -eq 0)
+            Commands        = ($dependency.Commands -join ', ')
+            MissingCommands = ($missingCommands -join ', ')
+            InstallSupported = -not [string]::IsNullOrWhiteSpace($dependency.WingetId)
+            WingetId        = $dependency.WingetId
+            ManualUrl       = $dependency.ManualUrl
+            Description     = $dependency.Description
+        }
+    }
+
+    if ($PassThru) {
+        return $items
+    }
+
+    $items | Sort-Object Name | Format-Table Name, Installed, Commands, MissingCommands -AutoSize
+}
+
+function Install-DevSecOpsToolkitDependencies {
+    param(
+        [string[]]$Commands,
+        [switch]$Prompt
+    )
+
+    $missingDependencies = Test-DevSecOpsToolkitDependencies -Commands $Commands -PassThru | Where-Object { -not $_.Installed }
+    if (-not $missingDependencies) {
+        Write-Host 'All selected dependencies are already installed.' -ForegroundColor Green
+        return
+    }
+
+    $wingetCommand = Get-Command winget -ErrorAction SilentlyContinue
+    if (-not $wingetCommand) {
+        Write-Host 'winget is not available in this shell. Showing manual installation guidance instead.' -ForegroundColor Yellow
+        foreach ($dependency in $missingDependencies) {
+            Write-Host "- $($dependency.Name): $($dependency.ManualUrl)" -ForegroundColor Cyan
+        }
+        return
+    }
+
+    foreach ($dependency in $missingDependencies) {
+        if (-not $dependency.InstallSupported) {
+            Write-Host "Manual install recommended for $($dependency.Name): $($dependency.ManualUrl)" -ForegroundColor Yellow
+            continue
+        }
+
+        $shouldInstall = $true
+        if ($Prompt) {
+            $answer = Read-Host "Install $($dependency.Name) now with winget? (Y/N)"
+            $shouldInstall = $answer -match '^[yYsS]'
+        }
+
+        if (-not $shouldInstall) {
+            Write-Host "Skipped $($dependency.Name)." -ForegroundColor Yellow
+            continue
+        }
+
+        Write-Host "Installing $($dependency.Name) with winget..." -ForegroundColor Cyan
+        & $wingetCommand.Path install --id $dependency.WingetId -e --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "winget could not install $($dependency.Name). Use: $($dependency.ManualUrl)" -ForegroundColor Red
+        }
+    }
+
+    Write-Host 'Dependency setup finished. Reopen the shell if newly installed commands are not detected yet.' -ForegroundColor Green
+}
+
+function Assert-DevSecOpsToolkitDependencies {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Commands,
+        [Parameter(Mandatory = $true)][string]$FeatureName
+    )
+
+    $missingDependencies = Test-DevSecOpsToolkitDependencies -Commands $Commands -PassThru | Where-Object { -not $_.Installed }
+    if (-not $missingDependencies) {
+        return
+    }
+
+    Write-Host ("Missing dependencies for {0}:" -f $FeatureName) -ForegroundColor Yellow
+    $missingDependencies | Format-Table Name, MissingCommands, ManualUrl -AutoSize | Out-Host
+
+    $answer = Read-Host 'Do you want to try guided installation now? (Y/N)'
+    if ($answer -match '^[yYsS]') {
+        Install-DevSecOpsToolkitDependencies -Commands $Commands -Prompt
+        $missingDependencies = Test-DevSecOpsToolkitDependencies -Commands $Commands -PassThru | Where-Object { -not $_.Installed }
+        if (-not $missingDependencies) {
+            return
+        }
+    }
+
+    throw "Missing dependencies for $FeatureName. Run Install-DevSecOpsToolkitDependencies to install or review the guidance."
+}
+
+function Get-DevSecOpsToolkitStatus {
+    $metadata = Read-DevSecOpsToolkitJsonFile -Path (Get-DevSecOpsToolkitMetadataPath)
+    $dependencies = Test-DevSecOpsToolkitDependencies -PassThru
+
+    $azureContext = $null
+    if (Get-Command az -ErrorAction SilentlyContinue) {
+        $azureJson = az account show --output json 2>$null
+        if ($LASTEXITCODE -eq 0 -and $azureJson) {
+            $azureContext = $azureJson | ConvertFrom-Json
+        }
+    }
+
+    $kubeContext = $null
+    if (Get-Command kubectl -ErrorAction SilentlyContinue) {
+        $kubeContext = (kubectl config current-context 2>$null)
+    }
+
+    [PSCustomObject]@{
+        InstalledAt         = $metadata.InstalledAt
+        RepositoryRoot      = $metadata.RepositoryRoot
+        RepositoryUrl       = $metadata.RepositoryUrl
+        PowerShellVersion   = $PSVersionTable.PSVersion.ToString()
+        AzureSubscription   = $azureContext.name
+        AzureSubscriptionId = $azureContext.id
+        KubernetesContext   = $kubeContext
+        MissingDependencies = @($dependencies | Where-Object { -not $_.Installed } | ForEach-Object { $_.Name })
+        Dependencies        = $dependencies
+    }
+}
+
+function Find-KubeResource {
+    param(
+        [string]$Name,
+        [ValidateSet('all', 'pods', 'services', 'deployments', 'statefulsets', 'ingresses', 'jobs', 'cronjobs')]
+        [string]$Kind = 'all'
+    )
+
+    Assert-DevSecOpsToolkitDependencies -Commands @('kubectl') -FeatureName 'Find-KubeResource'
+
+    $resourceKinds = if ($Kind -eq 'all') {
+        @('pods', 'services', 'deployments', 'statefulsets', 'ingresses', 'jobs', 'cronjobs')
+    }
+    else {
+        @($Kind)
+    }
+
+    $results = foreach ($resourceKind in $resourceKinds) {
+        $json = kubectl get $resourceKind --all-namespaces -o json 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $json) {
+            continue
+        }
+
+        $parsed = $json | ConvertFrom-Json
+        foreach ($item in $parsed.items) {
+            [PSCustomObject]@{
+                Kind      = $item.kind
+                Namespace = $item.metadata.namespace
+                Name      = $item.metadata.name
+            }
+        }
+    }
+
+    if ($Name) {
+        $results = $results | Where-Object { $_.Name -like "*$Name*" }
+    }
+
+    $results | Sort-Object Kind, Namespace, Name
+}
+
 function Update-DevSecOpsToolkit {
     param(
         [switch]$Reimport
@@ -77,9 +302,7 @@ function Update-DevSecOpsToolkit {
 
     $gitFolder = Join-Path $repoRoot '.git'
     if (Test-Path -LiteralPath $gitFolder) {
-        if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-            throw 'Git is required to update from a repository checkout.'
-        }
+        Assert-DevSecOpsToolkitDependencies -Commands @('git') -FeatureName 'Update-DevSecOpsToolkit'
 
         Write-Host "Refreshing repository in $repoRoot ..." -ForegroundColor Cyan
         git -C $repoRoot pull --ff-only
@@ -108,6 +331,8 @@ function Update-DevSecOpsToolkit {
 }
 
 function aks-sync {
+    Assert-DevSecOpsToolkitDependencies -Commands @('az', 'fzf') -FeatureName 'aks-sync'
+
     Write-Host 'Buscando clusteres AKS en la suscripcion activa...' -ForegroundColor Cyan
 
     $seleccion = az aks list --query "[].[name, resourceGroup]" -o tsv | fzf -m --prompt="Selecciona AKS (TAB=Varios, Enter=Confirmar): " --height=15 --layout=reverse
@@ -132,6 +357,8 @@ function aks-sync {
 }
 
 function asx {
+    Assert-DevSecOpsToolkitDependencies -Commands @('az', 'fzf') -FeatureName 'asx'
+
     Write-Host 'Buscando suscripciones en tu cuenta...' -ForegroundColor Cyan
 
     $seleccion = az account list --all --query "[].[name, id]" -o tsv | fzf --prompt="Suscripcion (Enter=Cambiar): " --height=15 --layout=reverse
@@ -150,6 +377,8 @@ function asx {
 }
 
 function k-clean {
+    Assert-DevSecOpsToolkitDependencies -Commands @('kubectl') -FeatureName 'k-clean'
+
     Write-Host 'Limpiando pods que han terminado con error...' -ForegroundColor Cyan
     kubectl get pods --all-namespaces | Select-String -Pattern 'Terminated|Evicted|Error' | ForEach-Object {
         $parts = $_ -split '\s+'
@@ -159,6 +388,8 @@ function k-clean {
 }
 
 function get-sp-expiry {
+    Assert-DevSecOpsToolkitDependencies -Commands @('az') -FeatureName 'get-sp-expiry'
+
     Write-Host '--- Buscador de Caducidad de Secretos (SP) ---' -ForegroundColor Cyan
 
     Write-Host '1. Buscar por Nombre (DisplayName)'
@@ -247,6 +478,13 @@ function Get-AksSpExpiry {
         [Parameter(Mandatory = $false, HelpMessage = 'Escanea todas las suscripciones activas sin preguntar')]
         [switch]$All
     )
+
+    if ($All) {
+        Assert-DevSecOpsToolkitDependencies -Commands @('az') -FeatureName 'Get-AksSpExpiry'
+    }
+    else {
+        Assert-DevSecOpsToolkitDependencies -Commands @('az', 'fzf') -FeatureName 'Get-AksSpExpiry'
+    }
 
     Write-Host "`n--- 🔍 Escaner masivo de caducidad de SPs en AKS ---" -ForegroundColor Cyan
     Write-Host 'Descargando lista de suscripciones de tu cuenta...' -ForegroundColor DarkGray
@@ -635,4 +873,4 @@ function New-BmcAzureTicket {
     }
 }
 
-Export-ModuleMember -Function aks-sync, asx, k-clean, get-sp-expiry, Get-AksSpExpiry, Find-JenkinsUserUsage, New-BmcAzureTicket, Get-DevSecOpsToolkitConfig, Update-DevSecOpsToolkit -Alias k, kx, kn
+Export-ModuleMember -Function aks-sync, asx, k-clean, Find-KubeResource, get-sp-expiry, Get-AksSpExpiry, Find-JenkinsUserUsage, New-BmcAzureTicket, Get-DevSecOpsToolkitConfig, Get-DevSecOpsToolkitStatus, Test-DevSecOpsToolkitDependencies, Install-DevSecOpsToolkitDependencies, Update-DevSecOpsToolkit -Alias k, kx, kn

@@ -12,11 +12,15 @@
         'aks-sync',
         'asx',
         'k-clean',
+        'Find-KubeResource',
         'get-sp-expiry',
         'Get-AksSpExpiry',
         'Find-JenkinsUserUsage',
         'New-BmcAzureTicket',
         'Get-DevSecOpsToolkitConfig',
+        'Get-DevSecOpsToolkitStatus',
+        'Test-DevSecOpsToolkitDependencies',
+        'Install-DevSecOpsToolkitDependencies',
         'Update-DevSecOpsToolkit'
     )
 

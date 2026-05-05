@@ -37,3 +37,11 @@ git push -u origin main
 ## After publishing
 
 Test the installer with your public repository URL so you know the update path works for other users.
+
+## Easy install command for users
+
+Once the repository is public, users can install it with:
+
+```powershell
+irm https://raw.githubusercontent.com/XaviFortes/devsecops-shell-toolkit/main/bootstrap.ps1 | iex
+```
