@@ -25,6 +25,7 @@
         'Get-AksSpExpiry',
         'Find-JenkinsUserUsage',
         'New-BmcAzureTicket',
+        'Update-BmcPlaywrightSession',
         'Get-DevSecOpsToolkitConfig',
         'Get-DevSecOpsToolkitStatus',
         'Test-DevSecOpsToolkitDependencies',

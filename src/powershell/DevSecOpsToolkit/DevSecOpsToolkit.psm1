@@ -38,8 +38,9 @@ function Get-DevSecOpsToolkitConfig {
     $defaults = [ordered]@{
         JenkinsUrl            = ''
         JenkinsCredentialPath = (Join-Path $HOME '.jenkins_secret.xml')
-        BmcRobotPath          = ''
+        BmcRobotPath          = 'C:\code\pw-sp-request'
         BmcRobotCommand       = 'npx tsx .\tests\request-sp.ts'
+        BmcPortalUrl          = 'https://prosegur-dwp.onbmc.com/dwp/app/'
     }
 
     $configPath = Get-DevSecOpsToolkitConfigPath
@@ -273,6 +274,7 @@ function Get-DevSecOpsToolkitCommandCatalog {
         [PSCustomObject]@{ Name = 'Test-TlsEndpoint'; Category = 'Security'; Summary = 'Check HTTPS certificates, expiry dates, and days remaining.'; Usage = 'Test-TlsEndpoint -Url https://example.com [-WarningDays 30]'; Dependencies = @() }
         [PSCustomObject]@{ Name = 'Find-JenkinsUserUsage'; Category = 'Automation'; Summary = 'Search Jenkins credentials usage by user or service principal.'; Usage = 'Find-JenkinsUserUsage [-TargetUsers user1,user2]'; Dependencies = @() }
         [PSCustomObject]@{ Name = 'New-BmcAzureTicket'; Category = 'Automation'; Summary = 'Launch the configured automation to request Azure secret renewal.'; Usage = 'New-BmcAzureTicket -AppId <id> -AppName <name> -ExpiryDate 2026-12-31'; Dependencies = @() }
+        [PSCustomObject]@{ Name = 'Update-BmcPlaywrightSession'; Category = 'Automation'; Summary = 'Renew the BMC Playwright auth session (auth.json) when the portal login has expired.'; Usage = 'Update-BmcPlaywrightSession [-RobotPath <path>] [-PortalUrl <url>]'; Dependencies = @() }
     )
 }
 
@@ -482,6 +484,9 @@ function Invoke-DevSecOpsToolkitMenuCommand {
             $expiryDate = Read-Host 'Expiry date (yyyy-MM-dd)'
             $entorno = Read-Host 'Entorno (optional)'
             New-BmcAzureTicket -AppId $appId -AppName $appName -ExpiryDate $expiryDate -Entorno $entorno
+        }
+        'Update-BmcPlaywrightSession' {
+            Update-BmcPlaywrightSession
         }
         default {
             & $CommandName
@@ -1578,6 +1583,69 @@ function New-BmcAzureTicket {
     }
 }
 
+function Update-BmcPlaywrightSession {
+    param(
+        [string]$RobotPath,
+        [string]$PortalUrl
+    )
+
+    $config = Get-DevSecOpsToolkitConfig
+    if (-not $RobotPath) {
+        $RobotPath = $config.BmcRobotPath
+    }
+    if (-not $PortalUrl) {
+        $PortalUrl = $config.BmcPortalUrl
+    }
+
+    if ([string]::IsNullOrWhiteSpace($RobotPath)) {
+        throw 'BmcRobotPath is not configured. Update $HOME/.devsecops-shell-toolkit/config.json or pass -RobotPath.'
+    }
+    if (-not (Test-Path -LiteralPath $RobotPath)) {
+        throw "Configured robot path not found: $RobotPath"
+    }
+
+    $authFile = Join-Path $RobotPath 'auth.json'
+    $authAge = $null
+    if (Test-Path -LiteralPath $authFile) {
+        $authAge = [math]::Round(((Get-Date) - (Get-Item $authFile).LastWriteTime).TotalHours, 1)
+        Write-Host "Current auth.json last updated $authAge hours ago." -ForegroundColor DarkGray
+    }
+    else {
+        Write-Host 'No auth.json found - a new session will be created.' -ForegroundColor Yellow
+    }
+
+    Write-Host ''
+    Write-Host '🌐 Opening BMC Portal for manual login...' -ForegroundColor Cyan
+    Write-Host '   Steps:' -ForegroundColor DarkGray
+    Write-Host '   1. Log in with your credentials in the browser window.' -ForegroundColor DarkGray
+    Write-Host '   2. Wait until you see the Prosegur service catalogue (main page).' -ForegroundColor DarkGray
+    Write-Host '   3. Close the browser. Playwright will save the session to auth.json automatically.' -ForegroundColor DarkGray
+    Write-Host ''
+
+    $env:NODE_TLS_REJECT_UNAUTHORIZED = '0'
+
+    Push-Location $RobotPath
+    try {
+        npx playwright codegen --save-storage=auth.json $PortalUrl
+    }
+    finally {
+        Pop-Location
+    }
+
+    if (Test-Path -LiteralPath $authFile) {
+        $newAge = [math]::Round(((Get-Date) - (Get-Item $authFile).LastWriteTime).TotalSeconds)
+        if ($newAge -lt 60) {
+            Write-Host "`n✅ auth.json updated successfully. You can run get-sp-expiry normally now." -ForegroundColor Green
+        }
+        else {
+            Write-Host "`n⚠️ auth.json exists but was not updated. Did you close the browser after logging in?" -ForegroundColor Yellow
+        }
+    }
+    else {
+        Write-Host "`n❌ auth.json was not created. The session was not saved." -ForegroundColor Red
+    }
+}
+
 Set-Alias -Name dso -Value Start-DevSecOpsToolkit
 
-Export-ModuleMember -Function Start-DevSecOpsToolkit, Get-DevSecOpsToolkitHelp, aks-sync, asx, k-clean, Find-KubeResource, Get-AzureSubscriptionSummary, Get-KubePodRestartReport, Get-KubeImageInventory, Get-VeleroBackup, Get-VeleroBackupDetails, Test-TlsEndpoint, get-sp-expiry, Get-AksSpExpiry, Find-JenkinsUserUsage, New-BmcAzureTicket, Get-DevSecOpsToolkitConfig, Get-DevSecOpsToolkitStatus, Test-DevSecOpsToolkitDependencies, Install-DevSecOpsToolkitDependencies, Update-DevSecOpsToolkit -Alias dso, k, kx, kn
+Export-ModuleMember -Function Start-DevSecOpsToolkit, Get-DevSecOpsToolkitHelp, aks-sync, asx, k-clean, Find-KubeResource, Get-AzureSubscriptionSummary, Get-KubePodRestartReport, Get-KubeImageInventory, Get-VeleroBackup, Get-VeleroBackupDetails, Test-TlsEndpoint, get-sp-expiry, Get-AksSpExpiry, Find-JenkinsUserUsage, New-BmcAzureTicket, Update-BmcPlaywrightSession, Get-DevSecOpsToolkitConfig, Get-DevSecOpsToolkitStatus, Test-DevSecOpsToolkitDependencies, Install-DevSecOpsToolkitDependencies, Update-DevSecOpsToolkit -Alias dso, k, kx, kn
