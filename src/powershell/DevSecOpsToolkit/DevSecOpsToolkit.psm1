@@ -1564,9 +1564,14 @@ function New-BmcAzureTicket {
     $env:NODE_TLS_REJECT_UNAUTHORIZED = '0'
     Write-Host "`n🤖 Iniciando robot para entorno: $Entorno" -ForegroundColor Cyan
 
+    # Split the configured command into executable + any static args, then append runtime args
+    $cmdParts = $RobotCommand -split '\s+', 2
+    $executable = $cmdParts[0]
+    $staticArgs = if ($cmdParts.Count -gt 1) { $cmdParts[1] -split '\s+' | Where-Object { $_ } } else { @() }
+
     Push-Location $RobotPath
     try {
-        Invoke-Expression "$RobotCommand $AppId $AppName $ExpiryDate \"$Entorno\""
+        & $executable @staticArgs $AppId $AppName $ExpiryDate $Entorno
     }
     finally {
         Pop-Location
